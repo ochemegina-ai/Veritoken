@@ -203,17 +203,34 @@ pub struct PropertyToken;
 #[contractimpl]
 impl PropertyToken {
     fn validate_property_type(env: &Env, pt: &String) {
+        // Reject empty strings before comparison — an empty property_type must
+        // never reach storage because it is indistinguishable from an unset field.
+        if pt.len() == 0 {
+            panic_with_error!(env, PropertyError::InvalidMetadata);
+        }
         if *pt != String::from_str(env, "residential")
             && *pt != String::from_str(env, "commercial")
             && *pt != String::from_str(env, "land")
         {
-            panic!("invalid property_type");
+            panic_with_error!(env, PropertyError::InvalidMetadata);
         }
     }
 
     fn validate_property_meta(env: &Env, meta: &PropertyMeta) {
         if !th::is_valid_legal_entity(&meta.legal_name) {
             panic_with_error!(env, PropertyError::InvalidMetadata);
+        }
+        // Reject whitespace-only legal names. is_valid_legal_entity only checks
+        // length > 0, so a string of spaces would pass. Copy into a stack buffer
+        // and verify that at least one non-space byte exists.
+        {
+            let len = meta.legal_name.len() as usize;
+            let mut buf = [0u8; 200];
+            meta.legal_name.copy_into_slice(&mut buf[..len]);
+            let all_whitespace = buf[..len].iter().all(|&b| b == b' ');
+            if all_whitespace {
+                panic_with_error!(env, PropertyError::InvalidMetadata);
+            }
         }
         if !th::is_valid_legal_entity(&meta.jurisdiction) {
             panic_with_error!(env, PropertyError::InvalidMetadata);

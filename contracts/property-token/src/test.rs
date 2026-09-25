@@ -1478,3 +1478,75 @@ fn test_force_migrate_holder_checkpoint() {
     // Pending should still be correct post-migration.
     assert_eq!(h.token.pending_dividend(&alice), 500);
 }
+
+// ── Regression tests for validation fixes ────────────────────────────────────
+
+// Fix 1: validate_property_type — empty string must be rejected
+#[test]
+#[should_panic]
+fn test_empty_property_type_rejected_in_constructor() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let kyc_id = Address::generate(&env);
+    let ce_id = Address::generate(&env);
+    let mut bad_meta = meta(&env);
+    // An empty property_type is indistinguishable from an unset field; must
+    // be caught before any state is written.
+    bad_meta.property_type = String::from_str(&env, "");
+    env.register(PropertyToken, (admin, kyc_id, ce_id, bad_meta));
+}
+
+// Fix 1 (update path): empty property_type also rejected in update_meta
+#[test]
+fn test_empty_property_type_rejected_in_update_meta() {
+    let h = setup();
+    let mut bad_meta = h.token.get_meta();
+    bad_meta.property_type = String::from_str(&h.env, "");
+    assert!(
+        h.token.try_update_meta(&bad_meta).is_err(),
+        "empty property_type must be rejected in update_meta"
+    );
+}
+
+// Fix 2: deposit_dividend — zero amount must be rejected before any state write
+#[test]
+fn test_deposit_dividend_rejects_zero_amount() {
+    let h = setup();
+    // Amount of zero is meaningless; no checkpoint or pool update should occur.
+    assert!(
+        h.token.try_deposit_dividend(&0, &0).is_err(),
+        "zero dividend amount must be rejected"
+    );
+    // Distribution count must not have advanced.
+    assert_eq!(h.token.dividend_deposit_count(), 0);
+}
+
+// Fix 3: deposit_dividend — unrecognized distribution type must be rejected
+#[test]
+fn test_deposit_dividend_rejects_unknown_distribution_type() {
+    let h = setup();
+    // Type 3 is out-of-range (valid values: 0=Rent, 1=Capital, 2=Other).
+    assert!(
+        h.token.try_deposit_dividend(&1_000, &3).is_err(),
+        "unknown distribution type must be rejected before checkpoint is written"
+    );
+    // No checkpoint must have been recorded.
+    assert_eq!(h.token.dividend_deposit_count(), 0);
+}
+
+// Fix 4: validate_property_meta — whitespace-only legal_name must be rejected
+#[test]
+#[should_panic]
+fn test_whitespace_only_legal_name_rejected_in_constructor() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let kyc_id = Address::generate(&env);
+    let ce_id = Address::generate(&env);
+    let mut bad_meta = meta(&env);
+    // Five spaces: len > 0, so is_valid_legal_entity passes without the whitespace fix.
+    // The whitespace guard must catch this before state is written.
+    bad_meta.legal_name = String::from_str(&env, "     ");
+    env.register(PropertyToken, (admin, kyc_id, ce_id, bad_meta));
+}
